@@ -5,7 +5,8 @@ spring:
   # Port, database URLs (R2DBC and Flyway), fees, limits, minimums and the Gateway URL come
   # from the Config Server: banking-config/account-service.yml and account-service-<profile>.yml.
   # Secrets (the database user and password) come from Vault: secret/account-service and
-  # secret/account-service/<profile>.
+  # secret/account-service/<profile>. Where Eureka is comes from banking-config/application.yml:
+  # the service registers there as account-service.
   config:
     import:
       - "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"

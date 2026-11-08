@@ -68,6 +68,8 @@ public abstract class PostgresIntegrationTest {
         properties.put("spring.r2dbc.url", r2dbcUrl());
         properties.put("spring.flyway.url", POSTGRES.getJdbcUrl());
         properties.put("account.integration.gateway-base-url", GATEWAY.url());
+        // No registry in the tests: the service must not register with a real Eureka.
+        properties.put("eureka.client.enabled", "false");
         CONFIG_SERVER = StubConfigServer.start(properties);
         // Read by application.yaml: configserver:${CONFIG_SERVER_URL:http://localhost:8888}
         System.setProperty("CONFIG_SERVER_URL", CONFIG_SERVER.url());
