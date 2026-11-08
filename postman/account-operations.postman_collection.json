@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "account-service - apertura, operaciones, transferencia y repetición",
-    "description": "Recorrido reproducible contra account-service (perfil dev, puerto 8082) y customer-service (perfil dev, puerto 8081): crea dos clientes, abre dos cuentas, deposita, retira, transfiere, repite la transferencia con la misma clave (200), prueba la misma clave con otro monto (409) y revisa saldos, historiales y reportes. Cada corrida usa documentos y operationId nuevos, así que se puede repetir sobre la misma base. Ajusta customerBaseUrl y accountBaseUrl si los servicios corren en otra dirección; cuando el API Gateway tenga rutas, ambas variables pueden apuntar a él.",
+    "description": "Recorrido reproducible por el API Gateway (perfil dev, puerto 8080) contra account-service y customer-service: crea dos clientes, abre dos cuentas, deposita, retira, transfiere, repite la transferencia con la misma clave (200), prueba la misma clave con otro monto (409) y revisa saldos, historiales y reportes. Cada corrida usa documentos y operationId nuevos, así que se puede repetir sobre la misma base. customerBaseUrl y accountBaseUrl apuntan al gateway; ajústalas si corre en otra dirección.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -682,11 +682,11 @@
   "variable": [
     {
       "key": "customerBaseUrl",
-      "value": "http://localhost:8081"
+      "value": "http://localhost:8080"
     },
     {
       "key": "accountBaseUrl",
-      "value": "http://localhost:8082"
+      "value": "http://localhost:8080"
     },
     {
       "key": "documentNumber",
