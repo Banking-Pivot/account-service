@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: account-service
+
+  # Port, database URLs (R2DBC and Flyway), fees, limits, minimums and the Gateway URL come
+  # from the Config Server: banking-config/account-service.yml and account-service-<profile>.yml.
+  # Secrets (the database user and password) come from Vault: secret/account-service and
+  # secret/account-service/<profile>.
+  config:
+    import:
+      - "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+      # Role ID and secret ID of this service's AppRole. In local development infra/vault
+      # writes this file every time Vault starts; elsewhere point VAULT_APPROLE_FILE to the
+      # file, or set SPRING_CLOUD_VAULT_APP_ROLE_ROLE_ID and SPRING_CLOUD_VAULT_APP_ROLE_SECRET_ID.
+      - "optional:file:${VAULT_APPROLE_FILE:../infra/.secrets/account-service.properties}"
+      - "vault://"
+
+  cloud:
+    vault:
+      uri: ${VAULT_URI:http://localhost:8200}
+      authentication: APPROLE
+      # Without its secrets the service cannot reach its database: stop at startup with the
+      # Vault error instead of failing later on a login to PostgreSQL.
+      fail-fast: true
+      kv:
+        # Read only this service's paths, not the shared secret/application.
+        default-context: ""
+
+  jackson:
+    # Optional fields of the contract are not nullable: absent means "does not apply"
+    # (requiredMinimum outside VIP_SAVINGS, transferKind outside transfers, closedAt while open).
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
+
+# Swagger UI shows the contract itself (served by OpenApiContractConfiguration),
+# not the spec springdoc derives from the generated annotations.
+springdoc:
+  swagger-ui:
+    url: /openapi/account-api.yml

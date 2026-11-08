@@ -1,0 +1,42 @@
+# Terms served by the stub Config Server in integration tests. Pinned here so tests do not
+# depend on the banking-config repository; same shape as banking-config/account-service.yml.
+account:
+  business-zone: America/Lima
+  products:
+    savings:
+      opening-minimum: { PEN: '0.00', USD: '0.00' }
+      free-monthly-movements: 5
+      movement-fee: { PEN: '2.50', USD: '0.75' }
+      monthly-movement-limit: 10
+    vip-savings:
+      opening-minimum: { PEN: '1000.00', USD: '300.00' }
+      free-monthly-movements: 10
+      movement-fee: { PEN: '1.50', USD: '0.50' }
+      monthly-movement-limit: 20
+      minimum-daily-average-balance: { PEN: '1000.00', USD: '300.00' }
+    checking:
+      opening-minimum: { PEN: '0.00', USD: '0.00' }
+      free-monthly-movements: 20
+      movement-fee: { PEN: '1.00', USD: '0.30' }
+      monthly-maintenance-fee: { PEN: '12.00', USD: '4.00' }
+    sme-checking:
+      opening-minimum: { PEN: '0.00', USD: '0.00' }
+      free-monthly-movements: 50
+      movement-fee: { PEN: '0.80', USD: '0.25' }
+    fixed-term:
+      opening-minimum: { PEN: '1000.00', USD: '300.00' }
+      free-monthly-movements: 1
+      movement-fee: { PEN: '0.00', USD: '0.00' }
+      operation-day-of-month: 15
+  integration:
+    timeout: 2s
+    circuit-breaker:
+      failure-rate-threshold: 50
+      sliding-window-size: 10
+      minimum-number-of-calls: 5
+      wait-duration-in-open-state: 60s
+      permitted-calls-in-half-open-state: 2
+spring:
+  r2dbc:
+    pool:
+      max-size: 20

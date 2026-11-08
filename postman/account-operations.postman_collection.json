@@ -1,0 +1,736 @@
+{
+  "info": {
+    "name": "account-service - apertura, operaciones, transferencia y repetición",
+    "description": "Recorrido reproducible contra account-service (perfil dev, puerto 8082) y customer-service (perfil dev, puerto 8081): crea dos clientes, abre dos cuentas, deposita, retira, transfiere, repite la transferencia con la misma clave (200), prueba la misma clave con otro monto (409) y revisa saldos, historiales y reportes. Cada corrida usa documentos y operationId nuevos, así que se puede repetir sobre la misma base. Ajusta customerBaseUrl y accountBaseUrl si los servicios corren en otra dirección; cuando el API Gateway tenga rutas, ambas variables pueden apuntar a él.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Clientes",
+      "description": "Dos clientes PERSONAL ACTIVE creados en customer-service. account-service los consulta por GET /customers/{id} antes de abrir cada cuenta.",
+      "item": [
+        {
+          "name": "01 Crear cliente A (customer-service)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Documento nuevo en cada corrida: customer-service no admite documentos repetidos.",
+                  "pm.collectionVariables.set('documentNumber', String(Math.floor(10000000 + Math.random() * 90000000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Cliente PERSONAL ACTIVE', () => {",
+                  "  pm.expect(body.type).to.eql('PERSONAL');",
+                  "  pm.expect(body.status).to.eql('ACTIVE');",
+                  "});",
+                  "pm.collectionVariables.set('holderAId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{customerBaseUrl}}/customers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PERSONAL\",\n  \"profile\": \"STANDARD\",\n  \"documentType\": \"DNI\",\n  \"documentNumber\": \"{{documentNumber}}\",\n  \"name\": \"Ana Perez\"\n}"
+            }
+          }
+        },
+        {
+          "name": "02 Crear cliente B (customer-service)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Documento nuevo en cada corrida: customer-service no admite documentos repetidos.",
+                  "pm.collectionVariables.set('documentNumber', String(Math.floor(10000000 + Math.random() * 90000000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Cliente PERSONAL ACTIVE', () => {",
+                  "  pm.expect(body.type).to.eql('PERSONAL');",
+                  "  pm.expect(body.status).to.eql('ACTIVE');",
+                  "});",
+                  "pm.collectionVariables.set('holderBId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{customerBaseUrl}}/customers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PERSONAL\",\n  \"profile\": \"STANDARD\",\n  \"documentType\": \"DNI\",\n  \"documentNumber\": \"{{documentNumber}}\",\n  \"name\": \"Bruno Diaz\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Apertura y consulta",
+      "description": "Una cuenta de ahorro con depósito inicial y una cuenta corriente sin depósito. La segunda cuenta de ahorro activa del mismo cliente se rechaza.",
+      "item": [
+        {
+          "name": "03 Abrir cuenta de ahorro de A con 500",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Location y ETag de la cuenta nueva', () => {",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/accounts/' + body.id);",
+                  "  pm.expect(pm.response.headers.get('ETag')).to.eql('\"0\"');",
+                  "});",
+                  "pm.test('SAVINGS ACTIVE con saldo 500 y un solo titular', () => {",
+                  "  pm.expect(body.product).to.eql('SAVINGS');",
+                  "  pm.expect(body.status).to.eql('ACTIVE');",
+                  "  pm.expect(body.balance).to.eql(500);",
+                  "  pm.expect(body.holderIds).to.eql([pm.collectionVariables.get('holderAId')]);",
+                  "});",
+                  "pm.collectionVariables.set('accountAId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"SAVINGS\",\n  \"currency\": \"PEN\",\n  \"primaryHolderId\": \"{{holderAId}}\",\n  \"initialDeposit\": 500.00\n}"
+            }
+          }
+        },
+        {
+          "name": "04 Abrir cuenta corriente de B sin depósito",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('CHECKING con saldo 0', () => {",
+                  "  pm.expect(body.product).to.eql('CHECKING');",
+                  "  pm.expect(body.balance).to.eql(0);",
+                  "});",
+                  "pm.collectionVariables.set('accountBId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"CHECKING\",\n  \"currency\": \"PEN\",\n  \"primaryHolderId\": \"{{holderBId}}\",\n  \"initialDeposit\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "05 Segunda cuenta de ahorro activa de A (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('code PERSONAL_ACCOUNT_ALREADY_EXISTS', () => pm.expect(pm.response.json().code).to.eql('PERSONAL_ACCOUNT_ALREADY_EXISTS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product\": \"SAVINGS\",\n  \"currency\": \"USD\",\n  \"primaryHolderId\": \"{{holderAId}}\",\n  \"initialDeposit\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "06 Consultar cuenta de A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('ETag \"0\" y saldo 500', () => {",
+                  "  pm.expect(pm.response.headers.get('ETag')).to.eql('\"0\"');",
+                  "  pm.expect(pm.response.json().balance).to.eql(500);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Depósitos y retiros",
+      "description": "Cada operación lleva un operationId generado por el cliente (idempotencia). Un retiro rechazado no registra nada.",
+      "item": [
+        {
+          "name": "07 Depositar 200 en A",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('depositOperationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created, operación nueva', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.be.false;",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('DEPOSIT sin comisión, saldo 700', () => {",
+                  "  pm.expect(body.operationId).to.eql(pm.collectionVariables.get('depositOperationId'));",
+                  "  pm.expect(body.type).to.eql('DEPOSIT');",
+                  "  pm.expect(body.status).to.eql('COMPLETED');",
+                  "  pm.expect(body.fee).to.eql(0);",
+                  "  pm.expect(body.balanceAfter).to.eql(700);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/deposits",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{depositOperationId}}\",\n  \"amount\": 200.00,\n  \"description\": \"Sueldo\"\n}"
+            }
+          }
+        },
+        {
+          "name": "08 Retirar 50 de A",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('withdrawalOperationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created, operación nueva', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.be.false;",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('WITHDRAWAL, saldo 650', () => {",
+                  "  pm.expect(body.type).to.eql('WITHDRAWAL');",
+                  "  pm.expect(body.balanceAfter).to.eql(650);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/withdrawals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{withdrawalOperationId}}\",\n  \"amount\": 50.00\n}"
+            }
+          }
+        },
+        {
+          "name": "09 Retiro mayor al saldo (422)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('rejectedOperationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('code INSUFFICIENT_FUNDS', () => pm.expect(pm.response.json().code).to.eql('INSUFFICIENT_FUNDS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/withdrawals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{rejectedOperationId}}\",\n  \"amount\": 10000.00\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Transferencias",
+      "description": "Transferencia a un tercero dentro del banco. La repetición con los mismos datos devuelve el resultado original con 200; la misma clave con otro monto es 409.",
+      "item": [
+        {
+          "name": "10 Transferir 150 de A a B",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('transferOperationId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created, operación nueva', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.headers.has('Idempotent-Replayed')).to.be.false;",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('TRANSFER THIRD_PARTY, saldo de A 500', () => {",
+                  "  pm.expect(body.type).to.eql('TRANSFER');",
+                  "  pm.expect(body.transferKind).to.eql('THIRD_PARTY');",
+                  "  pm.expect(body.accountId).to.eql(pm.collectionVariables.get('accountAId'));",
+                  "  pm.expect(body.counterpartyAccountId).to.eql(pm.collectionVariables.get('accountBId'));",
+                  "  pm.expect(body.amount).to.eql(150);",
+                  "  pm.expect(body.balanceAfter).to.eql(500);",
+                  "});",
+                  "pm.collectionVariables.set('transferResult', pm.response.text());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{transferOperationId}}\",\n  \"destinationAccountId\": \"{{accountBId}}\",\n  \"amount\": 150.00,\n  \"description\": \"Alquiler\"\n}"
+            }
+          }
+        },
+        {
+          "name": "11 Repetir la transferencia (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK con Idempotent-Replayed: true', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});",
+                  "pm.test('Mismo resultado que la transferencia original', () => {",
+                  "  pm.expect(pm.response.json()).to.eql(JSON.parse(pm.collectionVariables.get('transferResult')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{transferOperationId}}\",\n  \"destinationAccountId\": \"{{accountBId}}\",\n  \"amount\": 150.00,\n  \"description\": \"Alquiler\"\n}"
+            }
+          }
+        },
+        {
+          "name": "12 Misma clave con otro monto (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('code OPERATION_ID_CONFLICT', () => pm.expect(pm.response.json().code).to.eql('OPERATION_ID_CONFLICT'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operationId\": \"{{transferOperationId}}\",\n  \"destinationAccountId\": \"{{accountBId}}\",\n  \"amount\": 151.00,\n  \"description\": \"Alquiler\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Saldos e historial",
+      "description": "Los saldos reflejan una sola transferencia y el historial guarda monto, comisión, saldo posterior y operationId de cada movimiento.",
+      "item": [
+        {
+          "name": "13 Saldo de A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 500 y 3 movimientos del mes', () => {",
+                  "  pm.expect(body.balance).to.eql(500);",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(3);",
+                  "  pm.expect(body.monthlyUsage.freeMovementsRemaining).to.eql(2);",
+                  "  pm.expect(body.monthlyUsage.movementLimit).to.eql(10);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/balance"
+          }
+        },
+        {
+          "name": "14 Saldo de B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Saldo 150 tras una sola transferencia', () => {",
+                  "  pm.expect(body.balance).to.eql(150);",
+                  "  pm.expect(body.monthlyUsage.movementsUsed).to.eql(1);",
+                  "  pm.expect(body.monthlyMaintenanceFee).to.eql(12);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountBId}}/balance"
+          }
+        },
+        {
+          "name": "15 Historial de A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items;",
+                  "pm.test('4 movimientos, el más reciente primero', () => {",
+                  "  pm.expect(items.map(m => m.type)).to.eql(['TRANSFER_OUT', 'WITHDRAWAL', 'DEPOSIT', 'OPENING_DEPOSIT']);",
+                  "  pm.expect(items.map(m => m.balanceAfter)).to.eql([500, 650, 700, 500]);",
+                  "  pm.expect(items.map(m => m.sequence)).to.eql([4, 3, 2, 1]);",
+                  "});",
+                  "pm.test('El débito pertenece a la transferencia', () => {",
+                  "  pm.expect(items[0].operationId).to.eql(pm.collectionVariables.get('transferOperationId'));",
+                  "  pm.expect(items[0].counterpartyAccountId).to.eql(pm.collectionVariables.get('accountBId'));",
+                  "  pm.expect(items[0].fee).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/movements?size=10"
+          }
+        },
+        {
+          "name": "16 Historial de B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items;",
+                  "pm.test('Un solo crédito de 150 con la misma operación', () => {",
+                  "  pm.expect(items.length).to.eql(1);",
+                  "  pm.expect(items[0].type).to.eql('TRANSFER_IN');",
+                  "  pm.expect(items[0].amount).to.eql(150);",
+                  "  pm.expect(items[0].balanceAfter).to.eql(150);",
+                  "  pm.expect(items[0].operationId).to.eql(pm.collectionVariables.get('transferOperationId'));",
+                  "  pm.expect(items[0].counterpartyAccountId).to.eql(pm.collectionVariables.get('accountAId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountBId}}/movements?size=10"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Reportes",
+      "description": "Reporte por producto del día de negocio y saldo promedio diario del mes.",
+      "item": [
+        {
+          "name": "17 Reporte por producto de hoy",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fecha de negocio de hoy en America/Lima (UTC-5, sin horario de verano).",
+                  "pm.collectionVariables.set('businessDate', new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const line = (product) => body.products.find(l => l.product === product && l.currency === 'PEN');",
+                  "const movements = (product, type) => line(product).movements.find(m => m.type === type);",
+                  "pm.test('Todas las combinaciones de producto y moneda', () => {",
+                  "  pm.expect(body.businessZone).to.eql('America/Lima');",
+                  "  pm.expect(body.products.length).to.eql(10);",
+                  "});",
+                  "// Mínimos: si la base ya tenía datos de hoy, los totales son mayores.",
+                  "pm.test('Incluye las cuentas y movimientos de esta corrida', () => {",
+                  "  pm.expect(line('SAVINGS').accountsOpened).to.be.at.least(1);",
+                  "  pm.expect(line('CHECKING').accountsOpened).to.be.at.least(1);",
+                  "  pm.expect(line('SAVINGS').closingBalanceTotal).to.be.at.least(500);",
+                  "  pm.expect(movements('SAVINGS', 'TRANSFER_OUT').count).to.be.at.least(1);",
+                  "  pm.expect(movements('CHECKING', 'TRANSFER_IN').totalAmount).to.be.at.least(150);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/reports/products?from={{businessDate}}&to={{businessDate}}"
+          }
+        },
+        {
+          "name": "18 Saldo promedio diario de A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Promedio del mes en curso desde la apertura', () => {",
+                  "  pm.expect(body.fromDate).to.eql(body.toDate);",
+                  "  pm.expect(body.daysCounted).to.eql(1);",
+                  "  pm.expect(body.averageDailyBalance).to.eql(500);",
+                  "  pm.expect(body).to.not.have.property('requiredMinimum');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{accountBaseUrl}}/accounts/{{accountAId}}/daily-average-balance"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "customerBaseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "accountBaseUrl",
+      "value": "http://localhost:8082"
+    },
+    {
+      "key": "documentNumber",
+      "value": ""
+    },
+    {
+      "key": "holderAId",
+      "value": ""
+    },
+    {
+      "key": "holderBId",
+      "value": ""
+    },
+    {
+      "key": "accountAId",
+      "value": ""
+    },
+    {
+      "key": "accountBId",
+      "value": ""
+    },
+    {
+      "key": "depositOperationId",
+      "value": ""
+    },
+    {
+      "key": "withdrawalOperationId",
+      "value": ""
+    },
+    {
+      "key": "rejectedOperationId",
+      "value": ""
+    },
+    {
+      "key": "transferOperationId",
+      "value": ""
+    },
+    {
+      "key": "transferResult",
+      "value": ""
+    },
+    {
+      "key": "businessDate",
+      "value": ""
+    }
+  ]
+}

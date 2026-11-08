@@ -1,0 +1,21 @@
+package com.banking.account_service.domain.exception;
+
+/** Business rules a well-formed request can break. The name is the stable API error code. */
+public enum RuleViolation {
+    CUSTOMER_NOT_FOUND,
+    CUSTOMER_INACTIVE,
+    PRODUCT_NOT_ALLOWED,
+    CREDIT_CARD_REQUIRED,
+    INVALID_PARTICIPANTS,
+    OPENING_MINIMUM_NOT_MET,
+    INVALID_AMOUNT,
+    INSUFFICIENT_FUNDS,
+    MONTHLY_MOVEMENT_LIMIT_REACHED,
+    FIXED_TERM_OPERATION_DAY,
+    CURRENCY_MISMATCH,
+    SAME_ACCOUNT_TRANSFER,
+    DESTINATION_ACCOUNT_NOT_FOUND,
+    DESTINATION_ACCOUNT_CLOSED,
+    ACCOUNT_BALANCE_NOT_ZERO,
+    PERIOD_NOT_AVAILABLE
+}

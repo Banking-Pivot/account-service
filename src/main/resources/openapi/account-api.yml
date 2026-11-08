@@ -1,0 +1,1237 @@
+openapi: 3.0.3
+info:
+  title: Account API
+  version: 1.0.0
+  description: |
+    API for bank accounts: opening, maintenance, logical closing, deposits, withdrawals,
+    transfers inside the bank, balances, movement history and product reports.
+
+    Products and the customers that can open them:
+    - SAVINGS: PERSONAL customers. No maintenance fee; monthly movement limit.
+    - VIP_SAVINGS: PERSONAL customers with the VIP profile and an active credit card when
+      the account is opened. Requires a minimum monthly average daily balance.
+    - CHECKING: PERSONAL and BUSINESS customers. Monthly maintenance fee; no movement limit.
+    - SME_CHECKING: BUSINESS customers with the SME profile and an active credit card when
+      the account is opened. Exempt from the maintenance fee; no movement limit.
+    - FIXED_TERM: PERSONAL customers. One deposit or withdrawal per month, only on the
+      configured day of the month.
+
+    A PERSONAL customer can hold one ACTIVE savings account (SAVINGS or VIP_SAVINGS), one
+    ACTIVE checking account and any number of fixed-term accounts. A BUSINESS customer can
+    hold any number of checking accounts.
+
+    Every account has a monthly quota of free movements. Movements beyond the quota pay the
+    configured movement fee. Savings and fixed-term accounts also have a hard monthly limit
+    that rejects further movements. Months, days and the fixed-term operation day follow the
+    configured business time zone. Fees, limits and minimum amounts come from the Config Server.
+
+    Amounts use the account currency with at most two decimals. Instants are UTC.
+servers:
+  - url: /
+tags:
+  - name: Accounts
+    description: Account records, balances and movement history.
+  - name: Operations
+    description: Deposits, withdrawals and transfers. Each call is idempotent by operationId.
+  - name: Reports
+    description: Aggregated reports by product.
+paths:
+  /accounts:
+    post:
+      tags: [Accounts]
+      operationId: openAccount
+      summary: Open an account
+      description: |
+        Opens an ACTIVE account with a server-generated UUID after checking, through the API
+        Gateway, that the primary holder exists and is ACTIVE, that the customer type and
+        profile allow the product and, for VIP_SAVINGS and SME_CHECKING, that the customer has
+        an active credit card. Every other holder and authorized signer must also be an ACTIVE
+        customer.
+
+        The initial deposit must reach the product opening minimum, which can be zero. A
+        positive initial deposit is recorded as an OPENING_DEPOSIT movement and does not use
+        the monthly movement quota or limit.
+
+        A PERSONAL customer that already has an ACTIVE account of the same type (savings or
+        checking) receives 409, also when two requests race. Retrying a successful request
+        opens another account when the rules allow it; replay is not promised.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+            examples:
+              personalSavings:
+                summary: Personal savings account
+                value:
+                  product: SAVINGS
+                  currency: PEN
+                  primaryHolderId: 6bd651ef-1a2c-4e9a-b6cd-17d569fa8f44
+                  initialDeposit: 500.00
+              businessChecking:
+                summary: Business checking account with co-holder and signer
+                value:
+                  product: CHECKING
+                  currency: PEN
+                  primaryHolderId: 0c7d1d7e-4f3a-4b8e-9e43-5f0e8f0b6a11
+                  holderIds:
+                    - 0c7d1d7e-4f3a-4b8e-9e43-5f0e8f0b6a11
+                    - 9a1f4c52-7d0e-4b0b-8a6e-2f6f1f2f3e44
+                  authorizedSignerIds:
+                    - 4e5d6c7b-8a9f-4e0d-9c1b-2a3b4c5d6e7f
+                  initialDeposit: 0
+      responses:
+        '201':
+          description: Account opened.
+          headers:
+            Location:
+              description: URI of the opened account.
+              schema:
+                type: string
+              example: /accounts/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b
+            ETag:
+              $ref: '#/components/headers/AccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: The PERSONAL customer already has an ACTIVE account of this type (PERSONAL_ACCOUNT_ALREADY_EXISTS).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: PERSONAL_ACCOUNT_ALREADY_EXISTS
+                message: The customer already has an active account of this type.
+                timestamp: '2026-11-06T15:00:00Z'
+                path: /accounts
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      summary: List accounts using bounded pagination
+      description: |
+        Includes ACTIVE and CLOSED accounts unless filtered by status. customerId matches any
+        holder of the account, primary or not. Orders by account UUID ascending. Pages are not
+        snapshots; out-of-range pages return empty items.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: customerId
+          in: query
+          description: Returns accounts where this customer is a holder.
+          schema:
+            type: string
+            format: uuid
+        - name: product
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountProduct'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountStatus'
+      responses:
+        '200':
+          description: Account page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      operationId: getAccount
+      summary: Find an account by ID
+      description: Returns ACTIVE or CLOSED accounts.
+      responses:
+        '200':
+          description: Account found.
+          headers:
+            ETag:
+              $ref: '#/components/headers/AccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Accounts]
+      operationId: updateAccount
+      summary: Replace the holders and authorized signers
+      description: |
+        Replaces both lists. Product, currency, primary holder, balance and status cannot be
+        set here; the balance only changes through deposits, withdrawals and transfers.
+        The primary holder must stay in holderIds. A PERSONAL account has exactly one holder,
+        the primary holder, and no authorized signers. A BUSINESS account has one or more
+        holders and zero or more signers; a customer cannot be both. Every customer in the
+        lists must be ACTIVE.
+
+        Requires the strong ETag from a previous response. Monetary operations also change
+        the ETag, because they change the balance. A stale revision returns 412. A CLOSED
+        account returns 409. With a matching ETag and unchanged lists, the current
+        representation and ETag are returned.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+            example:
+              holderIds:
+                - 0c7d1d7e-4f3a-4b8e-9e43-5f0e8f0b6a11
+              authorizedSignerIds:
+                - 4e5d6c7b-8a9f-4e0d-9c1b-2a3b4c5d6e7f
+      responses:
+        '200':
+          description: Account updated, or already has the requested lists.
+          headers:
+            ETag:
+              $ref: '#/components/headers/AccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AccountClosed'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    delete:
+      tags: [Accounts]
+      operationId: closeAccount
+      summary: Close an account without erasing it
+      description: |
+        Changes ACTIVE to CLOSED. Requires a zero balance (422 ACCOUNT_BALANCE_NOT_ZERO
+        otherwise). The account, its movements and its operations are preserved and remain
+        readable. A closed account rejects further operations with 409.
+        Requires If-Match with the current revision. A CLOSED account with a matching
+        revision returns 204 without changes. A stale revision returns 412.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Account closed. No response body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/balance:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      operationId: getAccountBalance
+      summary: Current balance and monthly usage
+      description: |
+        Returns the balance and the usage of the current business month: movements used,
+        free movements left, the movement limit when the product has one and the fee the
+        next movement would pay. The usage restarts when the business month changes.
+      responses:
+        '200':
+          description: Balance found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountBalanceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/daily-average-balance:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      operationId: getDailyAverageBalance
+      summary: Average daily balance of a business month
+      description: |
+        Averages the closing balance of every business day of the month while the account
+        was open, including days without movements, which keep the previous closing balance.
+        The current month counts up to today, using the current balance as today's closing
+        balance. The result is rounded half-even to two decimals. For VIP_SAVINGS the
+        response compares the average with the required minimum.
+      parameters:
+        - name: period
+          in: query
+          description: Business month as YYYY-MM. Defaults to the current business month.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          example: '2026-11'
+      responses:
+        '200':
+          description: Average computed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyAverageBalanceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: The month is in the future or the account was not open in it (PERIOD_NOT_AVAILABLE).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/movements:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      operationId: listAccountMovements
+      summary: Movement history of an account
+      description: |
+        Lists movements newest first (descending sequence). Each movement keeps the amount,
+        the fee, the balance after the movement and the operation ID. from and to filter by
+        business date, both inclusive. Use size=10 for the last ten movements.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: from
+          in: query
+          description: First business date, inclusive.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Last business date, inclusive.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Movement page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/deposits:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [Operations]
+      operationId: deposit
+      summary: Deposit into an account
+      description: |
+        Credits the amount minus the movement fee, if the free monthly quota is used up.
+        See OperationId for idempotency: 201 for a new operation, 200 for a recognized repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+            example:
+              operationId: 7d9f1c3e-2b4a-4c6d-8e0f-1a2b3c4d5e6f
+              amount: 200.00
+              description: Cash deposit
+      responses:
+        '201':
+          $ref: '#/components/responses/OperationCreated'
+        '200':
+          $ref: '#/components/responses/OperationReplayed'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/withdrawals:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [Operations]
+      operationId: withdraw
+      summary: Withdraw from an account
+      description: |
+        Debits the amount plus the movement fee, if the free monthly quota is used up.
+        The balance cannot become negative (422 INSUFFICIENT_FUNDS).
+        See OperationId for idempotency: 201 for a new operation, 200 for a recognized repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalRequest'
+            example:
+              operationId: 2c4e6a8b-0d1f-4a3c-8e5d-7f9a1b3c5d7e
+              amount: 50.00
+      responses:
+        '201':
+          $ref: '#/components/responses/OperationCreated'
+        '200':
+          $ref: '#/components/responses/OperationReplayed'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/{accountId}/transfers:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [Operations]
+      operationId: transfer
+      summary: Transfer to another account of the bank
+      description: |
+        Moves money from the account in the path to another ACTIVE account of the bank in the
+        same currency, owned by the same primary holder (OWN_ACCOUNTS) or by another customer
+        (THIRD_PARTY). Each account applies its own product policy: the source pays its
+        movement fee on top of the amount, the destination counts an incoming movement and pays
+        its fee from the credited amount. Both accounts, both movements, the fees and the
+        operation result are written in one transaction; any failure leaves no change.
+
+        The response describes only the account in the path. The destination balance is not
+        disclosed. See OperationId for idempotency: 201 for a new operation, 200 for a
+        recognized repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+            example:
+              operationId: 9b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+              destinationAccountId: 5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d
+              amount: 100.00
+              description: Rent
+      responses:
+        '201':
+          $ref: '#/components/responses/OperationCreated'
+        '200':
+          $ref: '#/components/responses/OperationReplayed'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BusinessRuleViolation'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /accounts/reports/products:
+    get:
+      tags: [Reports]
+      operationId: getProductReport
+      summary: Report by product for a date range
+      description: |
+        Aggregates, for every product and currency, the accounts opened and closed in the
+        range, the accounts active at the end of the range, the total closing balance at the
+        end of the range and the count, amount and fees of each movement type. Dates are
+        business dates, both inclusive, and the range cannot exceed 366 days.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: First business date, inclusive.
+          schema:
+            type: string
+            format: date
+          example: '2026-11-01'
+        - name: to
+          in: query
+          required: true
+          description: Last business date, inclusive.
+          schema:
+            type: string
+            format: date
+          example: '2026-11-30'
+      responses:
+        '200':
+          description: Report generated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductReportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      description: Server-generated account UUID.
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      description: Zero-based page number.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        maximum: 10000
+        default: 0
+    Size:
+      name: size
+      in: query
+      description: Maximum number of items per page.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        Exactly one quoted numeric strong ETag, for example "3".
+        Wildcards, weak ETags and lists are not accepted by this API.
+        Missing header yields 428; malformed header yields 400;
+        a nonmatching revision yields 412.
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+        maxLength: 21
+      example: '"3"'
+  headers:
+    AccountETag:
+      description: |
+        Strong entity tag identifying the account revision as a quoted number. It changes
+        whenever the account representation changes, including the balance.
+        Send it in If-Match when updating or closing the account.
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+      example: '"3"'
+    IdempotentReplayed:
+      description: Present with the value true when the response repeats a recorded operation.
+      schema:
+        type: string
+        enum: ['true']
+  responses:
+    OperationCreated:
+      description: New operation completed and recorded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OperationResponse'
+    OperationReplayed:
+      description: |
+        Recognized repeat of a completed operation with the same operationId and the same data.
+        The body is the original result. No money moves again.
+      headers:
+        Idempotent-Replayed:
+          $ref: '#/components/headers/IdempotentReplayed'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OperationResponse'
+    OperationConflict:
+      description: |
+        The account is CLOSED (ACCOUNT_CLOSED), or the operationId already identifies an
+        operation with different data (OPERATION_ID_CONFLICT).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: OPERATION_ID_CONFLICT
+            message: The operationId was already used with different data.
+            timestamp: '2026-11-06T15:00:00Z'
+            path: /accounts/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b/transfers
+    AccountClosed:
+      description: The account is CLOSED (ACCOUNT_CLOSED).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Malformed JSON, invalid UUID, invalid field or parameter, or malformed If-Match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INVALID_REQUEST
+            message: 'Invalid or missing fields: amount.'
+            timestamp: '2026-11-06T15:00:00Z'
+            path: /accounts/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b/withdrawals
+    NotFound:
+      description: The account in the path does not exist (ACCOUNT_NOT_FOUND).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PreconditionFailed:
+      description: If-Match does not match the current revision (ACCOUNT_VERSION_CONFLICT). Read the account again.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnsupportedMediaType:
+      description: Request body must use application/json.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BusinessRuleViolation:
+      description: |
+        Well-formed request that breaks a business rule. The code identifies the rule:
+        CUSTOMER_NOT_FOUND, CUSTOMER_INACTIVE, PRODUCT_NOT_ALLOWED, CREDIT_CARD_REQUIRED,
+        INVALID_PARTICIPANTS, OPENING_MINIMUM_NOT_MET, INVALID_AMOUNT, INSUFFICIENT_FUNDS,
+        MONTHLY_MOVEMENT_LIMIT_REACHED, FIXED_TERM_OPERATION_DAY, CURRENCY_MISMATCH,
+        SAME_ACCOUNT_TRANSFER, DESTINATION_ACCOUNT_NOT_FOUND, DESTINATION_ACCOUNT_CLOSED,
+        ACCOUNT_BALANCE_NOT_ZERO, PERIOD_NOT_AVAILABLE.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INSUFFICIENT_FUNDS
+            message: The balance does not cover the amount and the fee.
+            timestamp: '2026-11-06T15:00:00Z'
+            path: /accounts/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b/withdrawals
+    PreconditionRequired:
+      description: If-Match header is required.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DependencyUnavailable:
+      description: |
+        Customer Service or Credit Service did not answer through the API Gateway within two
+        seconds, failed, or its circuit breaker is open (DEPENDENCY_UNAVAILABLE). Nothing was
+        written. Retry later. Ineligibility is reported with 422, never with 503.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: An unexpected error prevented completion of the request. Nothing was written.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    OperationId:
+      title: OperationId
+      type: string
+      format: uuid
+      description: |
+        Idempotency key generated by the client, one per intended monetary operation.
+        Scope: the whole Account Service. One operationId identifies one deposit, withdrawal or
+        transfer across all accounts. It is recorded only when the operation completes; a
+        request rejected with 4xx or 5xx records nothing and can be retried with the same key.
+        Repeating a completed operation with the same path account and the same body returns
+        200 with the original result, without moving money again, also when the repeat races
+        with the original. The same key with a different account, operation type, amount,
+        destination or description returns 409 OPERATION_ID_CONFLICT.
+      example: 9b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+    OpenAccountRequest:
+      title: OpenAccountRequest
+      type: object
+      additionalProperties: false
+      required: [product, currency, primaryHolderId, initialDeposit]
+      properties:
+        product:
+          $ref: '#/components/schemas/AccountProduct'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        primaryHolderId:
+          type: string
+          format: uuid
+          description: Customer that owns the account. Its type and profile decide which products are allowed.
+        holderIds:
+          type: array
+          uniqueItems: true
+          maxItems: 10
+          description: All holders, including the primary holder. Omitted or empty means the primary holder only.
+          items:
+            type: string
+            format: uuid
+        authorizedSignerIds:
+          type: array
+          uniqueItems: true
+          maxItems: 10
+          description: Authorized signers of a BUSINESS account. Defaults to none.
+          items:
+            type: string
+            format: uuid
+        initialDeposit:
+          type: number
+          minimum: 0
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Opening amount with at most two decimals. Zero is allowed when the product minimum is zero.
+          example: 500.00
+    UpdateAccountRequest:
+      title: UpdateAccountRequest
+      type: object
+      additionalProperties: false
+      description: Complete replacement of holders and authorized signers.
+      required: [holderIds, authorizedSignerIds]
+      properties:
+        holderIds:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+            format: uuid
+        authorizedSignerIds:
+          type: array
+          uniqueItems: true
+          maxItems: 10
+          items:
+            type: string
+            format: uuid
+    DepositRequest:
+      title: DepositRequest
+      type: object
+      additionalProperties: false
+      required: [operationId, amount]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Positive amount in the account currency with at most two decimals.
+          example: 200.00
+        description:
+          $ref: '#/components/schemas/OperationDescription'
+    WithdrawalRequest:
+      title: WithdrawalRequest
+      type: object
+      additionalProperties: false
+      required: [operationId, amount]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Positive amount in the account currency with at most two decimals.
+          example: 50.00
+        description:
+          $ref: '#/components/schemas/OperationDescription'
+    TransferRequest:
+      title: TransferRequest
+      type: object
+      additionalProperties: false
+      required: [operationId, destinationAccountId, amount]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        destinationAccountId:
+          type: string
+          format: uuid
+          description: ACTIVE account of the bank in the same currency, different from the source.
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          x-field-extra-annotation: '@jakarta.validation.constraints.Digits(integer = 12, fraction = 2)'
+          description: Positive amount in the account currency with at most two decimals.
+          example: 100.00
+        description:
+          $ref: '#/components/schemas/OperationDescription'
+    OperationDescription:
+      title: OperationDescription
+      type: string
+      maxLength: 140
+      description: Optional free text kept in the history. Surrounding whitespace is removed. Part of the idempotency comparison.
+      example: Rent
+    AccountResponse:
+      title: AccountResponse
+      type: object
+      required: [id, product, type, currency, primaryHolderId, customerType, customerProfile, holderIds, authorizedSignerIds, balance, status, openedAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b
+        product:
+          $ref: '#/components/schemas/AccountProduct'
+        type:
+          $ref: '#/components/schemas/AccountType'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        primaryHolderId:
+          type: string
+          format: uuid
+        customerType:
+          $ref: '#/components/schemas/CustomerType'
+        customerProfile:
+          $ref: '#/components/schemas/CustomerProfile'
+        holderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        authorizedSignerIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        balance:
+          type: number
+          description: Current balance.
+          example: 500.00
+        status:
+          $ref: '#/components/schemas/AccountStatus'
+        openedAt:
+          type: string
+          format: date-time
+          example: '2026-11-06T15:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-11-06T15:00:00Z'
+        closedAt:
+          type: string
+          format: date-time
+          description: Present only for CLOSED accounts.
+    AccountPageResponse:
+      title: AccountPageResponse
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AccountResponse'
+        page:
+          type: integer
+          format: int32
+          example: 0
+        size:
+          type: integer
+          format: int32
+          example: 20
+        totalElements:
+          type: integer
+          format: int64
+          example: 1
+        totalPages:
+          type: integer
+          format: int64
+          description: Ceiling of totalElements divided by size; zero when there are no matches.
+          example: 1
+    OperationResponse:
+      title: OperationResponse
+      type: object
+      description: Result of a deposit, withdrawal or transfer for the account in the path.
+      required: [operationId, type, status, accountId, amount, fee, balanceAfter, currency, occurredAt, businessDate]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/OperationType'
+        status:
+          type: string
+          enum: [COMPLETED]
+        accountId:
+          type: string
+          format: uuid
+        counterpartyAccountId:
+          type: string
+          format: uuid
+          description: Destination account of a transfer.
+        transferKind:
+          $ref: '#/components/schemas/TransferKind'
+        amount:
+          type: number
+          example: 100.00
+        fee:
+          type: number
+          description: Fee charged to the account in the path.
+          example: 0.00
+        balanceAfter:
+          type: number
+          description: Balance of the account in the path after the operation.
+          example: 400.00
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        description:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+          example: '2026-11-06T15:00:00Z'
+        businessDate:
+          type: string
+          format: date
+          description: Date in the business time zone that decides monthly quotas and limits.
+          example: '2026-11-06'
+    MovementResponse:
+      title: MovementResponse
+      type: object
+      required: [id, accountId, operationId, sequence, type, amount, fee, balanceAfter, occurredAt, businessDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+          description: Position of the movement in the account history, starting at 1.
+        type:
+          $ref: '#/components/schemas/MovementType'
+        amount:
+          type: number
+          example: 100.00
+        fee:
+          type: number
+          example: 0.00
+        balanceAfter:
+          type: number
+          example: 400.00
+        counterpartyAccountId:
+          type: string
+          format: uuid
+        description:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        businessDate:
+          type: string
+          format: date
+    MovementPageResponse:
+      title: MovementPageResponse
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/MovementResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int64
+    AccountBalanceResponse:
+      title: AccountBalanceResponse
+      type: object
+      required: [accountId, product, currency, balance, status, asOf, monthlyUsage, monthlyMaintenanceFee]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        product:
+          $ref: '#/components/schemas/AccountProduct'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        balance:
+          type: number
+          example: 400.00
+        status:
+          $ref: '#/components/schemas/AccountStatus'
+        asOf:
+          type: string
+          format: date-time
+        monthlyUsage:
+          $ref: '#/components/schemas/MonthlyUsage'
+        monthlyMaintenanceFee:
+          type: number
+          description: Monthly maintenance fee of the product. Zero when the product is exempt.
+          example: 0.00
+        operationDayOfMonth:
+          type: integer
+          format: int32
+          description: FIXED_TERM only. Day of the month that allows the single monthly movement.
+        nextOperationDate:
+          type: string
+          format: date
+          description: FIXED_TERM only. Next business date that accepts a deposit or withdrawal.
+    MonthlyUsage:
+      title: MonthlyUsage
+      type: object
+      required: [period, movementsUsed, freeMovements, freeMovementsRemaining, nextMovementFee]
+      properties:
+        period:
+          type: string
+          description: Current business month as YYYY-MM.
+          example: '2026-11'
+        movementsUsed:
+          type: integer
+          format: int32
+        freeMovements:
+          type: integer
+          format: int32
+        freeMovementsRemaining:
+          type: integer
+          format: int32
+        movementLimit:
+          type: integer
+          format: int32
+          description: Hard monthly limit. Absent when the product has none.
+        movementsRemaining:
+          type: integer
+          format: int32
+          description: Movements left before the hard limit. Absent when the product has none.
+        nextMovementFee:
+          type: number
+          description: Fee the next deposit, withdrawal or transfer movement would pay.
+          example: 0.00
+    DailyAverageBalanceResponse:
+      title: DailyAverageBalanceResponse
+      type: object
+      required: [accountId, currency, period, fromDate, toDate, daysCounted, averageDailyBalance]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        period:
+          type: string
+          example: '2026-11'
+        fromDate:
+          type: string
+          format: date
+          description: First day counted (opening date or first day of the month).
+        toDate:
+          type: string
+          format: date
+          description: Last day counted (today, closing date or last day of the month).
+        daysCounted:
+          type: integer
+          format: int32
+        averageDailyBalance:
+          type: number
+          example: 1250.00
+        requiredMinimum:
+          type: number
+          description: VIP_SAVINGS only. Minimum average daily balance required each month.
+        meetsRequirement:
+          type: boolean
+          description: VIP_SAVINGS only. Whether the average reaches the required minimum.
+    ProductReportResponse:
+      title: ProductReportResponse
+      type: object
+      required: [from, to, businessZone, generatedAt, products]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        businessZone:
+          type: string
+          example: America/Lima
+        generatedAt:
+          type: string
+          format: date-time
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductReportLine'
+    ProductReportLine:
+      title: ProductReportLine
+      type: object
+      required: [product, currency, accountsOpened, accountsClosed, activeAccountsAtEnd, closingBalanceTotal, totalFees, movements]
+      properties:
+        product:
+          $ref: '#/components/schemas/AccountProduct'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        accountsOpened:
+          type: integer
+          format: int64
+        accountsClosed:
+          type: integer
+          format: int64
+        activeAccountsAtEnd:
+          type: integer
+          format: int64
+        closingBalanceTotal:
+          type: number
+          description: Sum of the balances at the end of the range.
+        totalFees:
+          type: number
+        movements:
+          type: array
+          items:
+            $ref: '#/components/schemas/MovementTotals'
+    MovementTotals:
+      title: MovementTotals
+      type: object
+      required: [type, count, totalAmount, totalFees]
+      properties:
+        type:
+          $ref: '#/components/schemas/MovementType'
+        count:
+          type: integer
+          format: int64
+        totalAmount:
+          type: number
+        totalFees:
+          type: number
+    ErrorResponse:
+      title: ErrorResponse
+      type: object
+      required: [code, message, timestamp, path]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error identifier.
+          example: ACCOUNT_VERSION_CONFLICT
+        message:
+          type: string
+          description: Human-readable explanation of the error.
+          example: The account changed. Read it again before retrying.
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-11-06T15:00:00Z'
+        path:
+          type: string
+          example: /accounts/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b
+        traceId:
+          type: string
+          description: Correlation identifier when tracing is enabled.
+    AccountProduct:
+      title: AccountProduct
+      type: string
+      enum: [SAVINGS, VIP_SAVINGS, CHECKING, SME_CHECKING, FIXED_TERM]
+    AccountType:
+      title: AccountType
+      type: string
+      enum: [SAVINGS, CHECKING, FIXED_TERM]
+      description: Account family of the product. VIP_SAVINGS is SAVINGS; SME_CHECKING is CHECKING.
+    AccountStatus:
+      title: AccountStatus
+      type: string
+      enum: [ACTIVE, CLOSED]
+    CurrencyCode:
+      title: CurrencyCode
+      type: string
+      enum: [PEN, USD]
+    CustomerType:
+      title: CustomerType
+      type: string
+      enum: [PERSONAL, BUSINESS]
+      description: Type of the primary holder when the account was opened.
+    CustomerProfile:
+      title: CustomerProfile
+      type: string
+      enum: [STANDARD, VIP, SME]
+      description: Profile of the primary holder when the account was opened.
+    OperationType:
+      title: OperationType
+      type: string
+      enum: [DEPOSIT, WITHDRAWAL, TRANSFER]
+    TransferKind:
+      title: TransferKind
+      type: string
+      enum: [OWN_ACCOUNTS, THIRD_PARTY]
+      description: OWN_ACCOUNTS when both accounts have the same primary holder.
+    MovementType:
+      title: MovementType
+      type: string
+      enum: [OPENING_DEPOSIT, DEPOSIT, WITHDRAWAL, TRANSFER_IN, TRANSFER_OUT]
